@@ -3,6 +3,22 @@ import "./lib/error-capture";
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 
+// Bundle all HTML files from public/ so the SSR function can serve them directly.
+// This is needed for Vercel, where the SSR function handles all requests
+// (unlike Cloudflare Workers, which serves public/ assets at the edge before the worker).
+const htmlModules = import.meta.glob("../public/*.html", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
+
+const staticHtmlMap: Record<string, string> = Object.fromEntries(
+  Object.entries(htmlModules).map(([path, content]) => [
+    "/" + path.split("/").pop(),
+    content,
+  ]),
+);
+
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
 };
@@ -68,6 +84,14 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
+    const { pathname } = new URL(request.url);
+    const staticHtml = staticHtmlMap[pathname];
+    if (staticHtml) {
+      return new Response(staticHtml, {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+
     try {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
